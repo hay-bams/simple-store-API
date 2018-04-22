@@ -1,63 +1,57 @@
 from flask import Flask, jsonify, request, render_template
+from flask_restful import  Resource, Api, reqparse
+from flask_jwt import JWT, jwt_required
 
-app= Flask(__name__)
+from security import authenticate, identity
 
-stores = [
-    {
-        'name': 'My wonderful Store',
-        'items': [
-            {
-                'name': 'My Item',
-                'Price': 15.99
-            }
-        ]
-    }
-]
+app = Flask(__name__)
+app.secret_key = 'this is a secret'
 
-@app.route('/')
-def home():
-    return render_template('index.html')
+api = Api(app)
+items = []
+jwt = JWT(app, authenticate, identity) # /auth 
 
-@app.route('/store', methods=['POST'])
-def create_store():
-    request_data = request.get_json()
-    new_store = {
-        'name': request_data['name'],
-        'item': []
-    }
+class Item(Resource):
+    @jwt_required()
+    def get(self, name):
+        item = next(filter(lambda x: x['name'] == name, items), None)
+        return {'item': item }, 200 if item else 404
 
-    stores.append(new_store)
-    return jsonify(new_store)
+    def post(self, name):
+        if next(filter(lambda x: x['name'] == name, items), None):
+            return {'message': 'An item with name {} already exist'.format(name)}
+        data = request.get_json()
+        item = {'name': name, 'price': data['price']}
+        items.append(item)
+        return item, 201
 
-@app.route('/store/<string:name>')
-def get_store(name):
-    for store in stores:
-        if store['name'] == name:
-            return jsonify(store)
-    return jsonify({'message': 'Store not found'})
+    def delete(self, name):
+        global items
+        items = list(filter(lambda x: x['name'] != name, items))
+        return {'message': 'Item deleted'}
 
+    def put(self, name):
+        parser = reqparse.RequestParser()
+        parser.add_argument('price',
+        type=float,
+        required=True,
+        help='This field cannot be left blank'
+        )
+       # data = request.get_json()
+        data = parser.parse_args()
+        item = next(filter(lambda x: x['name'] == name, items), None)
+        if item is None:
+            item = {'name': name, 'price': data['price']}
+            items.append(item)
+        else:
+            item.update(data)
+        return items
 
-@app.route('/store')
-def get_stores():
-    return jsonify({'stores': stores})
+class ItemList(Resource):
+    def get(self):
+        return {'items': items}
 
-@app.route('/store/<string:name>/item', methods=['POST'])
-def create_items_in_store(name):
-    new_item = request.get_json()
-    for store in stores:
-        if(store['name'] == name):
-            store['items'].append(new_item)
-            return jsonify(store)
-    return jsonify({'message': 'store not found'})
+api.add_resource(Item, '/item/<string:name>')
+api.add_resource(ItemList, '/items')
 
-
-@app.route('/store/<string:name>/item')
-def get_items_in_store(name):
-    for store in stores:
-        if store['name'] == name:
-            return jsonify({'items': store['items']})
-    return jsonify({'message': 'Store not found'})
-
-
-
-app.run(port=3000)
+app.run(port=5000, debug=True)
